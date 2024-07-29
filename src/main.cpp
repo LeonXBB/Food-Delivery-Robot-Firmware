@@ -1,50 +1,62 @@
 #include <Arduino.h>
 #include "crsf.h"
 
-#define SBUS_BUFFER_SIZE 25
-uint8_t _rcs_buf[25] {};
-uint16_t _old_rc_values[RC_INPUT_MAX_CHANNELS] {};
-uint16_t _raw_rc_values[RC_INPUT_MAX_CHANNELS] {};
-uint16_t _raw_rc_count{};
+  // CRSF settings
+  #define SBUS_BUFFER_SIZE 32
+  uint8_t _rcs_buf[SBUS_BUFFER_SIZE] {};
+  uint16_t _old_rc_values[RC_INPUT_MAX_CHANNELS] {};
+  uint16_t _raw_rc_values[RC_INPUT_MAX_CHANNELS] {};
+  uint16_t _raw_rc_count{};
 
+  #define CRSF_MIN_VALUE 1000
+  #define CRSF_MID_VALUE 1500
+  #define CRSF_MAX_VALUE 2000
+  //END CRSF SETTINGS
 
-#define RX_PIN 27
-#define TX_PIN 26
+  // I/O SETTINGS
+  #define RX_PIN 26
+  #define TX_PIN 27
 
-#define OUTPUT_PIN_1 22
-#define OUTPUT_PIN_2 23
-#define OUTPUT_PIN_3 -1
-#define OUTPUT_PIN_4 -1
+  #define OUTPUT_PIN_1 22
+  #define OUTPUT_PIN_2 23
+  #define OUTPUT_PIN_3 16
+  #define OUTPUT_PIN_4 17
 
-#define CRSF_MIN_VALUE 1000
-#define CRSF_MID_VALUE 1500
-#define CRSF_MAX_VALUE 2000
+  #define LEFT_JOYSTICK_X 1
+  #define RIGHT_JOYSTICK_Y 0
+  #define BUTTON_D 6 
 
-#define LEFT_JOYSTICK_X 1
-#define LEFT_JOYSTICK_Y -1
-#define RIGHT_JOYSTICK_X -1
-#define RIGHT_JOYSTICK_Y 0
+  #define MIN_FILTER 3
+  #define CENTER_FILTER_COEF 10
 
-#define BUTTON_B 6 
+  #define FULL_SPEED_COEF 1.0
+  #define LOW_SPEED_COEF 0.4
 
-#define MIN_FILTER 3
+  int lower_border = CRSF_MID_VALUE - (MIN_FILTER * CENTER_FILTER_COEF);
+  int higher_border = CRSF_MID_VALUE + (MIN_FILTER * CENTER_FILTER_COEF);
 
-#define FULL_SPEED_COEF 1.0
-#define LOW_SPEED_COEF 0.3
+  int RightWheelOneChannel = 0; //antenna tube is top left
+  int RightWheelTwoChannel = 1;
+  int LeftWheelOneChannel = 2;
+  int LeftWheelTwoChannel = 3;
 
-int topRightWheelChannel = 1; //antenna tube is top left
-int botttomRightWheelChannel = 2;
+  int RightWheelOneMapped;
+  int RightWheelTwoMapped;
+  int LeftWheelOneMapped;
+  int LeftWheelTwoMapped;
 
-/*
-int topLeftWheelChannel = 1;
-int bottomLeftWheelChannel = 1;
-*/
+  int y_cmd = 0;
+  char x_cmd = 0;
+  int b_cmd = 0;
+  float speed_coef = FULL_SPEED_COEF;
 
-int y_cmd = 0;
-int x_cmd = 0;
-int b_cmd = 0;
+//END I/O SETTINGS
 
-float speed_coef = FULL_SPEED_COEF;
+//DEBUG SETTINGS
+#define PRINT_PWM_INFO 0
+#define PRINT_CHANNELS 0
+#define PRINT_COMMANDS 0
+//END DEBUG SETTINGS
 
 void SetServoPos(float percent, int pwmChannel)
 {
@@ -54,56 +66,85 @@ void SetServoPos(float percent, int pwmChannel)
     // using 16 bit resolution for PWM signal convert to range of 0-65536 (0-100% duty/on time)
     // 1/20th of 65536 = 3276.8
     // 1/10th of 65536 = 6553.6
-
+    
     uint32_t duty = map(percent, 0, 100, 3276.8, 6553.6);
     ledcWrite(pwmChannel, duty);
-    //Serial.print(pwmChannel);
-    //Serial.print(" ");
-    //Serial.println(duty);
+    
+    if (PRINT_PWM_INFO) {
+      Serial.printf("%u% || %u%\n", pwmChannel, duty);
+    }
 }
 
 int getBCmd() {
-  if (_raw_rc_values[BUTTON_B] != _old_rc_values[BUTTON_B]) {
+  if (_raw_rc_values[BUTTON_D] > _old_rc_values[BUTTON_D] && _old_rc_values[BUTTON_D] != 0) {
     return 1; //change speed mode
   }
   return 0;
 }
 
-int getXCmd() {
+char getXCmd() {
+
+  bool val_in_the_middle = ((lower_border < _raw_rc_values[LEFT_JOYSTICK_X]) && (_raw_rc_values[LEFT_JOYSTICK_X] < higher_border));
+
   if (_raw_rc_values[LEFT_JOYSTICK_X] - _old_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER) {
-    return  1; //right turn
-  } else if (_raw_rc_values[LEFT_JOYSTICK_X] - _old_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER) {
-    return 2; //left turn
+    return  'R'; //right turn
+  } else if (_old_rc_values[LEFT_JOYSTICK_X] - _raw_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER) {
+    return 'L'; //left turn
   }
-  return 0;
+
+  if (val_in_the_middle) { return 'N'; }  
+  return x_cmd;
 }
 
 int getYCmd() {
+
+  bool val_in_the_middle = ((lower_border < _raw_rc_values[RIGHT_JOYSTICK_Y]) && (_raw_rc_values[RIGHT_JOYSTICK_Y] < higher_border));
+  
+
   if (_raw_rc_values[RIGHT_JOYSTICK_Y] - _old_rc_values[RIGHT_JOYSTICK_Y] >= MIN_FILTER) {
-    //Serial.println("+");
-    return 1; // accelerate
+    if(_raw_rc_values[RIGHT_JOYSTICK_Y]>CRSF_MID_VALUE){
+      return 1; // fwd
+    }else{
+      return 0;
+    } 
   } else if (_old_rc_values[RIGHT_JOYSTICK_Y] - _raw_rc_values[RIGHT_JOYSTICK_Y] >= MIN_FILTER) {
-    //Serial.println("-");
-    return 2;// break
-  } 
+    if(_raw_rc_values[RIGHT_JOYSTICK_Y]<CRSF_MID_VALUE){
+      return 2; // back
+    }else{
+      return 0;
+    }    
+  }
+
+  if (val_in_the_middle) {
+    return 0;
+  }  
   return y_cmd;
 }
 
-long move(char wheel, char direction, uint16_t val) {
-  if (wheel == 't' && direction == 'f') {
-    return map(val, CRSF_MAX_VALUE, CRSF_MIN_VALUE, 100, 0) * speed_coef;
-  } else if (wheel == 't' && direction == 'b') {
-    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, 0, 100) * speed_coef;
-  } else if (wheel == 'b' && direction == 'f') {
-    return map(val, CRSF_MAX_VALUE, CRSF_MIN_VALUE, 0, 100) * speed_coef;    
-  } else if (wheel == 'b' && direction == 'b') {
-    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, 100, 0) * speed_coef;
-  } else if (wheel == 't' && direction == 'n') {
-    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, 0, 100) * speed_coef;
-  } else if (wheel == 'b' && direction == 'n') {
-    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, 100, 0) * speed_coef;
+long move(String side, String direction, uint16_t val) {
+  
+  long rel_zero = 50-50*speed_coef;
+  long rel_hundred = 50+50*speed_coef; 
+  
+  String cmd = side+"->"+direction;
+  
+  if(cmd=="R1->F"||cmd=="R2->B"){
+      return map(val, CRSF_MAX_VALUE, CRSF_MIN_VALUE, rel_hundred, rel_zero); // AIHZ
+  } else
+  if(cmd=="R1->B"||cmd=="R2->F"){
+    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, rel_zero, rel_hundred); // IAZH
+  } else
+  if(cmd=="L1->B"||cmd=="L2->F"||cmd=="R1->R"||cmd=="R2->L"){
+    return map(val, CRSF_MAX_VALUE, CRSF_MIN_VALUE, rel_zero, rel_hundred); // AIZH
+  } else 
+  if(cmd=="L1->F"||cmd=="L2->B"||cmd=="R1->L"||cmd=="R2->R"){
+    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, rel_hundred, rel_zero); // IAHZ
+  } else {
+    return 50;
   }
-}
+} 
+
+
 
 void setup() {
   // Note the format for setting a serial port is as follows: Serial2.begin(baud-rate, protocol, RX pin, TX pin);
@@ -111,20 +152,15 @@ void setup() {
   Serial.begin(9600);
   Serial2.begin(420000, SERIAL_8N1, RX_PIN, TX_PIN);
   
-  ledcSetup(topRightWheelChannel,50,16);
-  ledcSetup(botttomRightWheelChannel,50,16);
-  /*
-  ledcSetup(topLeftWheelChannel,50,16);
-  ledcSetup(bottomLeftWheelChannel,50,16);
-  */
+  ledcSetup(RightWheelOneChannel,50,16);
+  ledcSetup(RightWheelTwoChannel,50,16);
+  ledcSetup(LeftWheelOneChannel,50,16);
+  ledcSetup(LeftWheelTwoChannel,50,16);
 
-
-  ledcAttachPin(OUTPUT_PIN_1, topRightWheelChannel);
-  ledcAttachPin(OUTPUT_PIN_2, botttomRightWheelChannel);
-  /*
-  ledcAttachPin(OUTPUT_PIN_3, topLeftWheelChannel);
-  ledcAttachPin(OUTPUT_PIN_4, bottomLeftWheelChannel);
-  */
+  ledcAttachPin(OUTPUT_PIN_1, RightWheelOneChannel);
+  ledcAttachPin(OUTPUT_PIN_2, RightWheelTwoChannel);
+  ledcAttachPin(OUTPUT_PIN_3, LeftWheelOneChannel);
+  ledcAttachPin(OUTPUT_PIN_4, LeftWheelTwoChannel);
 }
 
 
@@ -136,115 +172,87 @@ void loop() { //Choose Serial1 or Serial2 as required
     {
       memcpy(_old_rc_values, _raw_rc_values, sizeof(_raw_rc_values));
       crsf_parse(&_rcs_buf[0], SBUS_BUFFER_SIZE, &_raw_rc_values[0], &_raw_rc_count, RC_INPUT_MAX_CHANNELS );
-      /*Serial.print("Ch 1: ");
-      Serial.print(_raw_rc_values[0]);
-      Serial.print("\tCh 2: ");
-      Serial.print(_raw_rc_values[1]);
-      Serial.print("\tCh 3: ");
-      Serial.print(_raw_rc_values[2]);
-      Serial.print("\tCh 4: ");
-      Serial.print(_raw_rc_values[3]);
-      Serial.print("\tCh 5: ");
-      Serial.println(_raw_rc_values[4]); */
-
-      b_cmd = getBCmd();
+      
       y_cmd = getYCmd();
       x_cmd = getXCmd();
-      
-      int topRightWheelMapped;
-      int bottomRightWheelMapped;
-      /*
-      int topLeftWheelMapped;
-      int bottomLeftWheelMapped;
-      */
-     
-      switch (b_cmd) {
-        case 1:
-          speed_coef == FULL_SPEED_COEF?speed_coef = LOW_SPEED_COEF:speed_coef = FULL_SPEED_COEF;
-          break;
-        default:
-          break;        
+      b_cmd = getBCmd();
+
+      uint16_t crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
+      String dirR="N";
+      String dirL="N";
+
+      if (PRINT_CHANNELS) {
+        Serial.print("Ch 1: ");
+        Serial.print(_raw_rc_values[0]);
+        Serial.print("\tCh 2: ");
+        Serial.print(_raw_rc_values[1]);
+        Serial.print("\tCh 3: ");
+        Serial.print(_raw_rc_values[2]);
+        Serial.print("\tCh 4: ");
+        Serial.print(_raw_rc_values[3]);
+        Serial.print("\tCh 5: ");
+        Serial.print(_raw_rc_values[4]);
+        Serial.print("\tCh 6: ");
+        Serial.print(_raw_rc_values[5]);
+        Serial.print("\tCh 7: ");
+        Serial.println(_raw_rc_values[6]);
+      }
+      if (PRINT_COMMANDS) {
+        Serial.printf("Speed coef: %f% || ", speed_coef);
+        Serial.printf("%u || ", b_cmd);
+        Serial.printf("%u || ", y_cmd);
+        Serial.printf("%u\n", x_cmd);
       }
 
-      char direction = 'f';
-      if (y_cmd == 2) direction = 'b';
-      switch (x_cmd)
-      {
-        case 1:
-            topRightWheelMapped = move('t', direction, _raw_rc_values[LEFT_JOYSTICK_X]);
-            /*
-            bottomLeftWheelMapped = move('b', direction _raw_rc_values[LEFT_JOYSTICK_X]);
-            */
+      if(b_cmd){
+        speed_coef == FULL_SPEED_COEF?speed_coef = LOW_SPEED_COEF:speed_coef = FULL_SPEED_COEF;
+      }
+  
+      switch(x_cmd){
+        case 'R':
+          dirR="R";
+          dirL="F";
+          crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+          break;
 
-          SetServoPos(topRightWheelMapped, topRightWheelChannel);
-          /*
-          SetServoPos(bottomLeftWheelMapped, botttomLeftWheelChannel);
-          */
+        case 'L':
+          dirR="L";
+          dirL="B";
+          crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+          break;
 
-        case 2:
-          /*
-          topLefttWheelMapped = move('t', direction, _raw_rc_values[LEFT_JOYSTICK_X]);;
-          */
-          bottomRightWheelMapped = move('b', direction, _raw_rc_values[LEFT_JOYSTICK_X]);
-          /*
-          SetServoPos(topLeftWheelMapped, topLeftWheelChannel);
-          */
-          SetServoPos(bottomRightWheelMapped, botttomRightWheelChannel);
+        /**/
+        default:
+          switch (y_cmd) {
+            case 1: 
+              dirR="F";
+              dirL="F";
+              break;
+            case 2: 
+              dirR="B";
+              dirL="B";
+              break;
+            default:
+              dirR="N";
+              dirL="N";
+              crsf_val = CRSF_MID_VALUE;
+          }
         
-        default:
-          break;
       }
+      
+      SetServoPos( move("R1", dirR, crsf_val), RightWheelOneChannel);
+      SetServoPos( move("R2", dirR, crsf_val), RightWheelTwoChannel);
 
-      switch (y_cmd)
-      {
-        case 1:
-          topRightWheelMapped = move('t', 'f', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          bottomRightWheelMapped = move('b', 'f', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          /*
-          topLeftWheelMapped = move('t', 'f', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          bottomLeftWheelMapped = move('t', 'f', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          */
+      SetServoPos( move("L1", dirL, crsf_val), LeftWheelOneChannel);
+      SetServoPos( move("L2", dirL, crsf_val), LeftWheelTwoChannel);
 
-          SetServoPos(topRightWheelMapped, topRightWheelChannel);
-          SetServoPos(bottomRightWheelMapped, botttomRightWheelChannel);
+    } else {
 
-          /*
-          SetServoPos(topLeftWheelMapped, topLeftWheelChannel);
-          SetServoPos(bottomLeftWheelMapped, bottomLeftWheelChannel);
-          */
-          break;
-
-        case 2:
-          topRightWheelMapped = move('t', 'b', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          bottomRightWheelMapped = move('b', 'b', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          /*
-          topLeftWheelMapped = move('t', 'b', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          bottomLeftWheelMapped = move('b', 'b', _raw_rc_values[RIGHT_JOYSTICK_Y]);
-          */
-
-          SetServoPos(topRightWheelMapped, topRightWheelChannel);
-          SetServoPos(bottomRightWheelMapped, botttomRightWheelChannel);
-          /*
-          SetServoPos(topLeftWheelMapped, topLeftWheelChannel);
-          SetServoPos(bottomLeftWheelMapped, bottomLeftWheelChannel);          
-          */
-          break;
-
-        default:
-          topRightWheelMapped = move('t', 'n', CRSF_MID_VALUE);
-          bottomRightWheelMapped = move('b', 'n', CRSF_MID_VALUE);
-          /*
-          topLeftWheelMapped = move('t', 'n', CRSF_MID_VALUE);
-          bottomLeftWheelMapped = move('b', 'n', CRSF_MID_VALUE);
-          */
-
-          SetServoPos(topRightWheelMapped, topRightWheelChannel);
-          SetServoPos(bottomRightWheelMapped, botttomRightWheelChannel);
-          /*
-          SetServoPos(topLeftWheelMapped, topLeftWheelChannel);
-          SetServoPos(bottomLeftWheelMapped, bottomLeftWheelChannel)
-          */
-      }
+      SetServoPos( move("R1", "N", CRSF_MID_VALUE), RightWheelOneChannel);
+      SetServoPos( move("R2", "N", CRSF_MID_VALUE), RightWheelTwoChannel); 
+      
+      SetServoPos( move("L1", "N", CRSF_MID_VALUE), LeftWheelOneChannel);
+      SetServoPos( move("L2", "N", CRSF_MID_VALUE), LeftWheelTwoChannel);
     }
   }
 }
