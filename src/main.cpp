@@ -18,8 +18,8 @@
   #define TX_PIN 27
 
   #define OUTPUT_PIN_1 22
-  #define OUTPUT_PIN_2 23
-  #define OUTPUT_PIN_3 16
+  #define OUTPUT_PIN_2 16
+  #define OUTPUT_PIN_3 23
   #define OUTPUT_PIN_4 17
 
   #define LEFT_JOYSTICK_X 1
@@ -36,8 +36,8 @@
   int higher_border = CRSF_MID_VALUE + (MIN_FILTER * CENTER_FILTER_COEF);
 
   int RightWheelOneChannel = 0; //antenna tube is top left
-  int RightWheelTwoChannel = 1;
-  int LeftWheelOneChannel = 2;
+  int LeftWheelOneChannel = 1;
+  int RightWheelTwoChannel = 2;
   int LeftWheelTwoChannel = 3;
 
   int RightWheelOneMapped;
@@ -50,6 +50,7 @@
   int b_cmd = 0;
   float speed_coef = FULL_SPEED_COEF;
 
+  bool LOST_CONNECTION = false;
 //END I/O SETTINGS
 
 //DEBUG SETTINGS
@@ -66,9 +67,11 @@ void SetServoPos(float percent, int pwmChannel)
     // using 16 bit resolution for PWM signal convert to range of 0-65536 (0-100% duty/on time)
     // 1/20th of 65536 = 3276.8
     // 1/10th of 65536 = 6553.6
-    
+
     uint32_t duty = map(percent, 0, 100, 3276.8, 6553.6);
-    ledcWrite(pwmChannel, duty);
+    if (!LOST_CONNECTION) {
+      ledcWrite(pwmChannel, duty);
+    }
     
     if (PRINT_PWM_INFO) {
       Serial.printf("%u% || %u%\n", pwmChannel, duty);
@@ -86,20 +89,21 @@ char getXCmd() {
 
   bool val_in_the_middle = ((lower_border < _raw_rc_values[LEFT_JOYSTICK_X]) && (_raw_rc_values[LEFT_JOYSTICK_X] < higher_border));
 
-  if (_raw_rc_values[LEFT_JOYSTICK_X] - _old_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER) {
-    return  'R'; //right turn
+  if ((_raw_rc_values[LEFT_JOYSTICK_X] - _old_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER)) {
+    if(_raw_rc_values[LEFT_JOYSTICK_X]>CRSF_MID_VALUE) return  'R'; //right turn
+    else return 'N';
   } else if (_old_rc_values[LEFT_JOYSTICK_X] - _raw_rc_values[LEFT_JOYSTICK_X] >= MIN_FILTER) {
-    return 'L'; //left turn
+    if(_raw_rc_values[LEFT_JOYSTICK_X]<CRSF_MID_VALUE) return 'L'; //left turn
+    else return 'N';
   }
 
-  if (val_in_the_middle) { return 'N'; }  
+  if (val_in_the_middle) return 'N';  
   return x_cmd;
 }
 
 int getYCmd() {
 
   bool val_in_the_middle = ((lower_border < _raw_rc_values[RIGHT_JOYSTICK_Y]) && (_raw_rc_values[RIGHT_JOYSTICK_Y] < higher_border));
-  
 
   if (_raw_rc_values[RIGHT_JOYSTICK_Y] - _old_rc_values[RIGHT_JOYSTICK_Y] >= MIN_FILTER) {
     if(_raw_rc_values[RIGHT_JOYSTICK_Y]>CRSF_MID_VALUE){
@@ -140,11 +144,48 @@ long move(String side, String direction, uint16_t val) {
   if(cmd=="L1->F"||cmd=="L2->B"||cmd=="R1->L"||cmd=="R2->R"){
     return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, rel_hundred, rel_zero); // IAHZ
   } else {
-    return 50;
+    return map(val, CRSF_MIN_VALUE, CRSF_MAX_VALUE, rel_zero, rel_hundred);
   }
 } 
 
+void lostConnection() {
+  
+  long val = move("R1", "N", CRSF_MID_VALUE);
+  
+  SetServoPos( val, RightWheelOneChannel);
+  SetServoPos( val, RightWheelTwoChannel); 
+        
+  SetServoPos( val, LeftWheelOneChannel);
+  SetServoPos( val, LeftWheelTwoChannel);
 
+  LOST_CONNECTION = true;
+  
+  for (int i = 0; i < SBUS_BUFFER_SIZE; i++) {
+    _rcs_buf[i] = 0;
+  }
+
+  for (int i = 0; i < RC_INPUT_MAX_CHANNELS; i++) {
+    _raw_rc_values[i] = CRSF_MID_VALUE;
+  }
+}
+
+uint16_t getCombinedValue(char direction, int position) {
+  
+  int diff = abs(_raw_rc_values[LEFT_JOYSTICK_X] - CRSF_MID_VALUE);
+  int val;
+
+  if (direction == 'F' && position == 1) {
+    val = min(CRSF_MAX_VALUE, _raw_rc_values[RIGHT_JOYSTICK_Y] + diff);
+  } else if (direction == 'F' && position == 2) {  
+    val = min((double)CRSF_MAX_VALUE, CRSF_MID_VALUE + (diff * 0.8));
+  } else if (direction == 'B' && position == 1) {
+    val = max(CRSF_MIN_VALUE, _raw_rc_values[RIGHT_JOYSTICK_Y] - diff);
+  } else if (direction == 'B' && position == 2) {
+    val = max((double)CRSF_MIN_VALUE, CRSF_MID_VALUE - (diff * 0.8));
+  }
+
+  return val;
+}
 
 void setup() {
   // Note the format for setting a serial port is as follows: Serial2.begin(baud-rate, protocol, RX pin, TX pin);
@@ -163,96 +204,134 @@ void setup() {
   ledcAttachPin(OUTPUT_PIN_4, LeftWheelTwoChannel);
 }
 
-
 void loop() { //Choose Serial1 or Serial2 as required
   
-  while (Serial2.available()) {
-    size_t numBytesRead = Serial2.readBytes(_rcs_buf, SBUS_BUFFER_SIZE);
-    if(numBytesRead > 0)
-    {
-      memcpy(_old_rc_values, _raw_rc_values, sizeof(_raw_rc_values));
-      crsf_parse(&_rcs_buf[0], SBUS_BUFFER_SIZE, &_raw_rc_values[0], &_raw_rc_count, RC_INPUT_MAX_CHANNELS );
-      
-      y_cmd = getYCmd();
-      x_cmd = getXCmd();
-      b_cmd = getBCmd();
-
-      uint16_t crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
-      String dirR="N";
-      String dirL="N";
-
-      if (PRINT_CHANNELS) {
-        Serial.print("Ch 1: ");
-        Serial.print(_raw_rc_values[0]);
-        Serial.print("\tCh 2: ");
-        Serial.print(_raw_rc_values[1]);
-        Serial.print("\tCh 3: ");
-        Serial.print(_raw_rc_values[2]);
-        Serial.print("\tCh 4: ");
-        Serial.print(_raw_rc_values[3]);
-        Serial.print("\tCh 5: ");
-        Serial.print(_raw_rc_values[4]);
-        Serial.print("\tCh 6: ");
-        Serial.print(_raw_rc_values[5]);
-        Serial.print("\tCh 7: ");
-        Serial.println(_raw_rc_values[6]);
-      }
-      if (PRINT_COMMANDS) {
-        Serial.printf("Speed coef: %f% || ", speed_coef);
-        Serial.printf("%u || ", b_cmd);
-        Serial.printf("%u || ", y_cmd);
-        Serial.printf("%u\n", x_cmd);
-      }
-
-      if(b_cmd){
-        speed_coef == FULL_SPEED_COEF?speed_coef = LOW_SPEED_COEF:speed_coef = FULL_SPEED_COEF;
-      }
-  
-      switch(x_cmd){
-        case 'R':
-          dirR="R";
-          dirL="F";
-          crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
-          break;
-
-        case 'L':
-          dirR="L";
-          dirL="B";
-          crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
-          break;
-
-        /**/
-        default:
-          switch (y_cmd) {
-            case 1: 
-              dirR="F";
-              dirL="F";
-              break;
-            case 2: 
-              dirR="B";
-              dirL="B";
-              break;
-            default:
-              dirR="N";
-              dirL="N";
-              crsf_val = CRSF_MID_VALUE;
-          }
-        
-      }
-      
-      SetServoPos( move("R1", dirR, crsf_val), RightWheelOneChannel);
-      SetServoPos( move("R2", dirR, crsf_val), RightWheelTwoChannel);
-
-      SetServoPos( move("L1", dirL, crsf_val), LeftWheelOneChannel);
-      SetServoPos( move("L2", dirL, crsf_val), LeftWheelTwoChannel);
-
+  while (true) {
+    if (!Serial2.available()) {
+      lostConnection();
+      break;
     } else {
+      size_t numBytesRead = Serial2.readBytes(_rcs_buf, SBUS_BUFFER_SIZE);
+      if(numBytesRead == 0) {
+        lostConnection();
+        break;
+      } else {
+        LOST_CONNECTION = false;
+        memcpy(_old_rc_values, _raw_rc_values, sizeof(_raw_rc_values));
+        crsf_parse(&_rcs_buf[0], SBUS_BUFFER_SIZE, &_raw_rc_values[0], &_raw_rc_count, RC_INPUT_MAX_CHANNELS );
+        
+        y_cmd = getYCmd();
+        x_cmd = getXCmd();
+        b_cmd = getBCmd();
 
-      SetServoPos( move("R1", "N", CRSF_MID_VALUE), RightWheelOneChannel);
-      SetServoPos( move("R2", "N", CRSF_MID_VALUE), RightWheelTwoChannel); 
-      
-      SetServoPos( move("L1", "N", CRSF_MID_VALUE), LeftWheelOneChannel);
-      SetServoPos( move("L2", "N", CRSF_MID_VALUE), LeftWheelTwoChannel);
+        uint16_t l_crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+        uint16_t r_crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+        String dirR="N";
+        String dirL="N";
+
+        if (PRINT_CHANNELS) {
+          Serial.print("Ch 1: ");
+          Serial.print(_raw_rc_values[0]);
+          Serial.print("\tCh 2: ");
+          Serial.print(_raw_rc_values[1]);
+          Serial.print("\tCh 3: ");
+          Serial.print(_raw_rc_values[2]);
+          Serial.print("\tCh 4: ");
+          Serial.print(_raw_rc_values[3]);
+          Serial.print("\tCh 5: ");
+          Serial.print(_raw_rc_values[4]);
+          Serial.print("\tCh 6: ");
+          Serial.print(_raw_rc_values[5]);
+          Serial.print("\tCh 7: ");
+          Serial.println(_raw_rc_values[6]);
+        }
+        if (PRINT_COMMANDS) {
+          Serial.printf("Speed coef: %f% || ", speed_coef);
+          Serial.printf("%u || ", b_cmd);
+          Serial.printf("%u || ", y_cmd);
+          Serial.printf("%c\n", x_cmd);
+        }
+
+        switch(b_cmd){
+          case 1:
+            speed_coef == FULL_SPEED_COEF?speed_coef = LOW_SPEED_COEF:speed_coef = FULL_SPEED_COEF;
+            break;
+          default:
+            break;
+        }
+    
+        switch(x_cmd){
+          case 'R':
+            dirR="R";
+            dirL="F";
+            //crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+            switch (y_cmd) {
+              case 1:
+                dirR = "F";
+                l_crsf_val = getCombinedValue('F', 1);
+                r_crsf_val = getCombinedValue('F', 2);
+                break;
+              case 2:
+                dirR = "B";
+                l_crsf_val = getCombinedValue('B', 1);
+                r_crsf_val = getCombinedValue('B', 2);
+                break;
+              default:
+                break;
+            }
+            break;
+
+          case 'L':
+            dirR="L";
+            dirL="B";
+            //crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
+            switch (y_cmd) {
+              case 1:
+                dirR = "F";
+                l_crsf_val = getCombinedValue('F', 2);
+                r_crsf_val = getCombinedValue('F', 1);
+                break;
+              case 2:
+                dirR ="B";
+                l_crsf_val = getCombinedValue('B', 2);
+                r_crsf_val = getCombinedValue('B', 1);
+                break;              
+              default:
+                break;
+            }
+            break;
+
+          /**/
+          default:
+            switch (y_cmd) {
+              case 1: 
+                l_crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
+                r_crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
+                dirR="F";
+                dirL="F";
+                break;
+              case 2: 
+                l_crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
+                r_crsf_val = _raw_rc_values[RIGHT_JOYSTICK_Y];
+                dirR="B";
+                dirL="B";
+                break;
+              default:
+                dirR="N";
+                dirL="N";
+                l_crsf_val = CRSF_MID_VALUE;
+                r_crsf_val = CRSF_MID_VALUE;
+            }
+          
+        }
+        
+        SetServoPos( move("R1", dirR, r_crsf_val), RightWheelOneChannel);
+        SetServoPos( move("L1", dirL, l_crsf_val), LeftWheelOneChannel);
+        
+        SetServoPos( move("R2", dirR, r_crsf_val), RightWheelTwoChannel);
+        SetServoPos( move("L2", dirL, l_crsf_val), LeftWheelTwoChannel);
+
+      }
     }
   }
 }
