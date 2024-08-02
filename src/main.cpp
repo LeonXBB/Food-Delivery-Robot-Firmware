@@ -17,23 +17,24 @@
   #define RX_PIN 26
   #define TX_PIN 27
 
-  #define OUTPUT_PIN_1 22
-  #define OUTPUT_PIN_2 16
-  #define OUTPUT_PIN_3 23
-  #define OUTPUT_PIN_4 17
+  #define OUTPUT_PIN_1 23
+  #define OUTPUT_PIN_2 17
+  #define OUTPUT_PIN_3 22
+  #define OUTPUT_PIN_4 16
 
   #define LEFT_JOYSTICK_X 1
   #define RIGHT_JOYSTICK_Y 0
   #define BUTTON_D 6 
 
   #define MIN_FILTER 3
-  #define CENTER_FILTER_COEF 10
+  #define CENTER_FILTER_COEF 30
+  #define MOVEMENT_TURN_COEF 0.7
 
   #define FULL_SPEED_COEF 1.0
   #define LOW_SPEED_COEF 0.4
 
-  int lower_border = CRSF_MID_VALUE - (MIN_FILTER * CENTER_FILTER_COEF);
-  int higher_border = CRSF_MID_VALUE + (MIN_FILTER * CENTER_FILTER_COEF);
+  int lower_border = CRSF_MID_VALUE - CENTER_FILTER_COEF;
+  int higher_border = CRSF_MID_VALUE + CENTER_FILTER_COEF;
 
   int RightWheelOneChannel = 0; //antenna tube is top left
   int LeftWheelOneChannel = 1;
@@ -177,11 +178,11 @@ uint16_t getCombinedValue(char direction, int position) {
   if (direction == 'F' && position == 1) {
     val = min(CRSF_MAX_VALUE, _raw_rc_values[RIGHT_JOYSTICK_Y] + diff);
   } else if (direction == 'F' && position == 2) {  
-    val = min((double)CRSF_MAX_VALUE, CRSF_MID_VALUE + (diff * 0.8));
+    val = min((double)CRSF_MAX_VALUE, CRSF_MID_VALUE + (diff * MOVEMENT_TURN_COEF));
   } else if (direction == 'B' && position == 1) {
     val = max(CRSF_MIN_VALUE, _raw_rc_values[RIGHT_JOYSTICK_Y] - diff);
   } else if (direction == 'B' && position == 2) {
-    val = max((double)CRSF_MIN_VALUE, CRSF_MID_VALUE - (diff * 0.8));
+    val = max((double)CRSF_MIN_VALUE, CRSF_MID_VALUE - (diff * MOVEMENT_TURN_COEF));
   }
 
   return val;
@@ -264,7 +265,6 @@ void loop() { //Choose Serial1 or Serial2 as required
           case 'R':
             dirR="R";
             dirL="F";
-            //crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
             switch (y_cmd) {
               case 1:
                 dirR = "F";
@@ -284,7 +284,6 @@ void loop() { //Choose Serial1 or Serial2 as required
           case 'L':
             dirR="L";
             dirL="B";
-            //crsf_val = _raw_rc_values[LEFT_JOYSTICK_X];
             switch (y_cmd) {
               case 1:
                 dirR = "F";
