@@ -1,57 +1,57 @@
 #include <Arduino.h>
 #include "crsf.h"
 
-  // CRSF settings
-  #define SBUS_BUFFER_SIZE 32
-  uint8_t _rcs_buf[SBUS_BUFFER_SIZE] {};
-  uint16_t _old_rc_values[RC_INPUT_MAX_CHANNELS] {};
-  uint16_t _raw_rc_values[RC_INPUT_MAX_CHANNELS] {};
-  uint16_t _raw_rc_count{};
+// CRSF settings
+#define SBUS_BUFFER_SIZE 32
+uint8_t _rcs_buf[SBUS_BUFFER_SIZE] {};
+uint16_t _old_rc_values[RC_INPUT_MAX_CHANNELS] {};
+uint16_t _raw_rc_values[RC_INPUT_MAX_CHANNELS] {};
+uint16_t _raw_rc_count{};
 
-  #define CRSF_MIN_VALUE 1000
-  #define CRSF_MID_VALUE 1500
-  #define CRSF_MAX_VALUE 2000
-  //END CRSF SETTINGS
+#define CRSF_MIN_VALUE 1000
+#define CRSF_MID_VALUE 1500
+#define CRSF_MAX_VALUE 2000
+//END CRSF SETTINGS
 
-  // I/O SETTINGS
-  #define RX_PIN 26
-  #define TX_PIN 27
+// I/O SETTINGS
+#define RX_PIN 26
+#define TX_PIN 27
 
-  #define ESC_OUTPUT_PIN_1 23
-  #define ESC_OUTPUT_PIN_2 17
-  #define ESC_OUTPUT_PIN_3 22
-  #define ESC_OUTPUT_PIN_4 16
+#define ESC_OUTPUT_PIN_1 23
+#define ESC_OUTPUT_PIN_2 17
+#define ESC_OUTPUT_PIN_3 22
+#define ESC_OUTPUT_PIN_4 16
 
-  #define LEFT_JOYSTICK_X_CHANNEL 1
-  #define RIGHT_JOYSTICK_Y_CHANNEL 0
-  #define BUTTON_D_CHANNEL 6 
+#define LEFT_JOYSTICK_X_CHANNEL 1
+#define RIGHT_JOYSTICK_Y_CHANNEL 0
+#define BUTTON_D_CHANNEL 6 
 
-  #define MIN_FILTER 3
-  #define CENTER_FILTER_COEF 30
-  #define MOVEMENT_TURN_COEF 0.7
+#define MIN_FILTER 3
+#define CENTER_FILTER_COEF 30
+#define MOVEMENT_TURN_COEF 0.7
 
-  #define FULL_SPEED_COEF 1.0
-  #define LOW_SPEED_COEF 0.4
+#define FULL_SPEED_COEF 1.0
+#define LOW_SPEED_COEF 0.4
 
-  int lowerBorder = CRSF_MID_VALUE - CENTER_FILTER_COEF;
-  int higherBorder = CRSF_MID_VALUE + CENTER_FILTER_COEF;
+int lowerBorder = CRSF_MID_VALUE - CENTER_FILTER_COEF;
+int higherBorder = CRSF_MID_VALUE + CENTER_FILTER_COEF;
 
-  int rightWheelOneChannel = 0; //antenna tube is top left
-  int leftWheelOneChannel = 1;
-  int rightWheelTwoChannel = 2;
-  int leftWheelTwoChannel = 3;
+int rightWheelOneChannel = 0; //antenna tube is top left
+int leftWheelOneChannel = 1;
+int rightWheelTwoChannel = 2;
+int leftWheelTwoChannel = 3;
 
-  int rightWheelOneMapped;
-  int rightWheelTwoMapped;
-  int leftWheelOneMapped;
-  int leftWheelTwoMapped;
+int rightWheelOneMapped;
+int rightWheelTwoMapped;
+int leftWheelOneMapped;
+int leftWheelTwoMapped;
 
-  int yCmd = 0;
-  char xCmd = 0;
-  int bCmd = 0;
-  float speedCoef = FULL_SPEED_COEF;
+int yCmd = 0;
+char xCmd = 0;
+int bCmd = 0;
+float speedCoef = FULL_SPEED_COEF;
 
-  bool lostConnectionFlag = false;
+bool lostConnectionFlag = false;
 //END I/O SETTINGS
 
 //DEBUG SETTINGS
