@@ -22,9 +22,12 @@ uint16_t _raw_rc_count{};
 #define ESC_OUTPUT_PIN_3 22
 #define ESC_OUTPUT_PIN_4 16
 
+#define SERVO_OUTPUT_PIN -1
+
 #define LEFT_JOYSTICK_X_CHANNEL 1
 #define RIGHT_JOYSTICK_Y_CHANNEL 0
 #define BUTTON_D_CHANNEL 6 
+#define SWITCH_F_CHANNEL 5
 
 #define MIN_FILTER 3
 #define CENTER_FILTER_COEF 30
@@ -49,6 +52,8 @@ int leftWheelTwoMapped;
 int yCmd = 0;
 char xCmd = 0;
 int bCmd = 0;
+int sCmd = 0;
+
 float speedCoef = FULL_SPEED_COEF;
 
 bool lostConnectionFlag = false;
@@ -83,6 +88,11 @@ int getBCmd() {
   if (_raw_rc_values[BUTTON_D_CHANNEL] > _old_rc_values[BUTTON_D_CHANNEL] && _old_rc_values[BUTTON_D_CHANNEL] != 0) {
     return 1; //change speed mode
   }
+  return 0;
+}
+
+int getSCmd() {
+  if (0) {return 1;}
   return 0;
 }
 
@@ -224,6 +234,7 @@ void loop() { //Choose Serial1 or Serial2 as required
         yCmd = getYCmd();
         xCmd = getXCmd();
         bCmd = getBCmd();
+        sCmd = getSCmd();
 
         uint16_t l_crsf_val = _raw_rc_values[LEFT_JOYSTICK_X_CHANNEL];
         uint16_t r_crsf_val = _raw_rc_values[LEFT_JOYSTICK_X_CHANNEL];
@@ -249,8 +260,9 @@ void loop() { //Choose Serial1 or Serial2 as required
         if (PRINT_COMMANDS) {
           Serial.printf("Speed coef: %f% || ", speedCoef);
           Serial.printf("%u || ", bCmd);
-          Serial.printf("%u || ", yCmd);
-          Serial.printf("%c\n", xCmd);
+          Serial.printf("%u || ", sCmd);
+          Serial.printf("%u || ", yCmd)
+          Serial.printf("%c\n", sCmd);
         }
 
         switch(bCmd){
@@ -261,6 +273,13 @@ void loop() { //Choose Serial1 or Serial2 as required
             break;
         }
     
+        switch(sCmd) {
+          case 1:
+            break;
+          default:
+            break;
+        }
+
         switch(xCmd){
           case 'R':
             dirR="R";
